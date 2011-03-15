@@ -13,7 +13,7 @@ else:
 try:
     import json
 except ImportError, _:
-    import simplejson
+    import simplejson as json
 
 class Task(ResultModelBase):
     """Task result/status."""
