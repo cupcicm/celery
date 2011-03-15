@@ -10,6 +10,10 @@ if sa.__version__.startswith('0.5'):
 else:
     from celery.db.a805d4bd import PickleType
 
+try:
+    import json
+except ImportError, _:
+    import simplejson
 
 class Task(ResultModelBase):
     """Task result/status."""
@@ -21,7 +25,7 @@ class Task(ResultModelBase):
                    autoincrement=True)
     task_id = sa.Column(sa.String(255))
     status = sa.Column(sa.String(50), default=states.PENDING)
-    result = sa.Column(PickleType, nullable=True)
+    result = sa.Column(PickleType(pickler=json), nullable=True)
     date_done = sa.Column(sa.DateTime, default=datetime.now,
                        onupdate=datetime.now, nullable=True)
     traceback = sa.Column(sa.Text, nullable=True)
@@ -47,7 +51,7 @@ class TaskSet(ResultModelBase):
     id = sa.Column(sa.Integer, sa.Sequence("taskset_id_sequence"),
                 autoincrement=True, primary_key=True)
     taskset_id = sa.Column(sa.String(255))
-    result = sa.Column(sa.PickleType, nullable=True)
+    result = sa.Column(sa.PickleType(pickler=json), nullable=True)
     date_done = sa.Column(sa.DateTime, default=datetime.now,
                        nullable=True)
 
