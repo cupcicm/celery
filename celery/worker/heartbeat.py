@@ -1,19 +1,20 @@
 import threading
+
 from time import time, sleep
+
+from celery.worker.state import SOFTWARE_INFO
 
 
 class Heart(threading.Thread):
-    """Thread sending heartbeats at an interval.
+    """Thread sending heartbeats at regular intervals.
 
     :param eventer: Event dispatcher used to send the event.
     :keyword interval: Time in seconds between heartbeats.
-        Default is 2 minutes.
-
-    .. attribute:: bpm
-
-        Beats per minute.
+                       Default is 2 minutes.
 
     """
+
+    #: Beats per minute.
     bpm = 0.5
 
     def __init__(self, eventer, interval=None):
@@ -21,8 +22,8 @@ class Heart(threading.Thread):
         self.eventer = eventer
         self.bpm = interval and interval / 60.0 or self.bpm
         self._shutdown = threading.Event()
-        self._stopped = threading.Event()
         self.setDaemon(True)
+        self.setName(self.__class__.__name__)
         self._state = None
 
     def run(self):
@@ -30,7 +31,7 @@ class Heart(threading.Thread):
         bpm = self.bpm
         dispatch = self.eventer.send
 
-        dispatch("worker-online")
+        dispatch("worker-online", **SOFTWARE_INFO)
 
         # We can't sleep all of the interval, because then
         # it takes 60 seconds (or value of interval) to shutdown
@@ -38,18 +39,21 @@ class Heart(threading.Thread):
 
         last_beat = None
         while 1:
-            now = time()
+            try:
+                now = time()
+            except TypeError:
+                # we lost the race at interpreter shutdown,
+                # so time() has been collected by gc.
+                return
+
             if not last_beat or now > last_beat + (60.0 / bpm):
                 last_beat = now
-                dispatch("worker-heartbeat")
+                dispatch("worker-heartbeat", **SOFTWARE_INFO)
             if self._shutdown.isSet():
                 break
             sleep(1)
 
-        try:
-            dispatch("worker-offline")
-        finally:
-            self._stopped.set()
+        dispatch("worker-offline", **SOFTWARE_INFO)
 
     def stop(self):
         """Gracefully shutdown the thread."""
@@ -57,6 +61,5 @@ class Heart(threading.Thread):
             return
         self._state = "CLOSE"
         self._shutdown.set()
-        self._stopped.wait() # block until this thread is done
         if self.isAlive():
-            self.join(1e100)
+            self.join(1e10)

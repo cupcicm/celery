@@ -1,3 +1,5 @@
+.. _guide-sets:
+
 =======================================
  Sets of tasks, Subtasks and Callbacks
 =======================================
@@ -5,19 +7,23 @@
 .. contents::
     :local:
 
+.. _sets-subtasks:
+
 Subtasks
 ========
 
-The :class:`~celery.task.sets.subtask` class is used to wrap the arguments and
+.. versionadded:: 2.0
+
+The :class:`~celery.task.sets.subtask` type is used to wrap the arguments and
 execution options for a single task invocation::
 
     subtask(task_name_or_cls, args, kwargs, options)
 
-For convenience every task also has a shortcut to create subtask instances::
+For convenience every task also has a shortcut to create subtasks::
 
     task.subtask(args, kwargs, options)
 
-:class:`~celery.task.sets.subtask` is actually a subclass of :class:`dict`,
+:class:`~celery.task.sets.subtask` is actually a :class:`dict` subclass,
 which means it can be serialized with JSON or other encodings that doesn't
 support complex Python objects.
 
@@ -29,13 +35,15 @@ Also it can be regarded as a type, as the following usage works::
 
 This makes it excellent as a means to pass callbacks around to tasks.
 
+.. _sets-callbacks:
+
 Callbacks
 ---------
 
-Let's improve our ``add`` task so it can accept a callback that
+Let's improve our `add` task so it can accept a callback that
 takes the result as an argument::
 
-    from celery.decorators import task
+    from celery.task import task
     from celery.task.sets import subtask
 
     @task
@@ -45,27 +53,31 @@ takes the result as an argument::
             subtask(callback).delay(result)
         return result
 
-See? :class:`~celery.task.sets.subtask` also knows how it should be applied,
+:class:`~celery.task.sets.subtask` also knows how it should be applied,
 asynchronously by :meth:`~celery.task.sets.subtask.delay`, and
 eagerly by :meth:`~celery.task.sets.subtask.apply`.
 
-The best thing is that any arguments you add to ``subtask.delay``,
+The best thing is that any arguments you add to `subtask.delay`,
 will be prepended to the arguments specified by the subtask itself!
 
-So if you have the subtask::
+If you have the subtask::
 
     >>> add.subtask(args=(10, ))
 
-``subtask.delay(result)`` becomes::
+`subtask.delay(result)` becomes::
 
     >>> add.apply_async(args=(result, 10))
 
-Now let's execute our new ``add`` task with a callback::
+...
+
+Now let's execute our new `add` task with a callback::
 
     >>> add.delay(2, 2, callback=add.subtask((8, )))
 
-As expected this will first launch one task calculating ``2 + 2``, then 
-another task calculating ``4 + 8``.
+As expected this will first launch one task calculating :math:`2 + 2`, then
+another task calculating :math:`4 + 8`.
+
+.. _sets-taskset:
 
 Task Sets
 =========
@@ -88,13 +100,14 @@ A task set takes a list of :class:`~celery.task.sets.subtask`'s::
 
     >>> result = job.apply_async()
 
-    >>> result.ready()  # has all subtasks completed?
+    >>> result.ready()  # have all subtasks completed?
     True
-    >>> result.successful() # was all subtasks successful?
-
+    >>> result.successful() # were all subtasks successful?
+    True
     >>> result.join()
     [4, 8, 16, 32, 64]
 
+.. _sets-results:
 
 Results
 -------
@@ -145,3 +158,82 @@ It supports the following operations:
     Gather the results for all of the subtasks
     and return a list with them ordered by the order of which they
     were called.
+
+
+Task set callbacks
+------------------
+
+
+Simple, but may take a long time before your callback is called:
+
+
+.. code-block:: python
+
+    from celery import current_app
+    from celery.task import subtask
+
+    def join_taskset(setid, subtasks, callback, interval=15, max_retries=None):
+        result = TaskSetResult(setid, subtasks)
+        if result.ready():
+            return subtask(callback).delay(result.join())
+        join_taskset.retry(countdown=interval, max_retries=max_retries)
+
+
+
+Using Redis and atomic counters:
+
+
+.. code-block:: python
+
+    from celery import current_app
+    from celery.task import Task, TaskSet
+    from celery.result import TaskSetResult
+    from celery.utils import gen_unique_id, cached_property
+    from redis import Redis
+    from time import sleep
+
+    class supports_taskset_callback(Task):
+        abstract = True
+        accept_magic_kwargs = False
+
+        def after_return(self, \*args, \*\*kwargs):
+            if self.request.taskset:
+                callback = self.request.kwargs.get("callback")
+                if callback:
+                    setid = self.request.taskset
+                    # task set must be saved in advance, so the task doesn't
+                    # try to restore it before that happens.  This is why we
+                    # use the `apply_presaved_taskset` below.
+                    result = TaskSetResult.restore(setid)
+                    current = self.redis.incr("taskset-" + setid)
+                    if current >= result.total:
+                        r = subtask(callback).delay(result.join())
+
+        @cached_property
+        def redis(self):
+            return Redis(host="localhost", port=6379)
+
+    @task(base=supports_taskset_callback)
+    def add(x, y, \*\*kwargs):
+        return x + y
+
+    @task
+    def sum_of(numbers):
+        print("TASKSET READY: %r" % (sum(numbers), ))
+
+    def apply_presaved_taskset(tasks):
+        r = []
+        setid = gen_unique_id()
+        for task in tasks:
+            uuid = gen_unique_id()
+            task.options["task_id"] = uuid
+            r.append((task, current_app.AsyncResult(uuid)))
+        ts = current_app.TaskSetResult(setid, [task[1] for task in r])
+        ts.save()
+        return TaskSet(task[0] for task in r).apply_async(taskset_id=setid)
+
+
+    # sum of 100 add tasks
+    result = apply_presaved_taskset(
+                add.subtask((i, i), {"callback": sum_of.subtask()})
+                    for i in xrange(100))

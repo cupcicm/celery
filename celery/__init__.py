@@ -1,20 +1,38 @@
 """Distributed Task Queue"""
+# :copyright: (c) 2009 - 2011 by Ask Solem.
+# :license:   BSD, see LICENSE for more details.
 
-VERSION = (2, 0, 2)
+import os
+import sys
+
+VERSION = (2, 2, 4)
 
 __version__ = ".".join(map(str, VERSION[0:3])) + "".join(VERSION[3:])
 __author__ = "Ask Solem"
 __contact__ = "ask@celeryproject.org"
-__homepage__ = "http://github.com/ask/celery/"
+__homepage__ = "http://celeryproject.org"
 __docformat__ = "restructuredtext"
 
+if sys.version_info < (2, 5):
+    import warnings
+    warnings.warn(DeprecationWarning("""
 
-def is_stable_release():
-    if len(VERSION) > 3 and isinstance(VERSION[3], basestring):
-        return False
-    return not VERSION[1] % 2
+Python 2.4 support is deprecated and only versions 2.5, 2.6, 2.7+
+will be supported starting from Celery version 2.3.
 
 
-def version_with_meta():
-    return "%s (%s)" % (__version__,
-                        is_stable_release() and "stable" or "unstable")
+"""))
+
+
+def Celery(*args, **kwargs):
+    from celery.app import App
+    return App(*args, **kwargs)
+
+if not os.environ.get("CELERY_NO_EVAL", False):
+    from celery.local import LocalProxy
+
+    def _get_current_app():
+        from celery.app import current_app
+        return current_app()
+
+    current_app = LocalProxy(_get_current_app)

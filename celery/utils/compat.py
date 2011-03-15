@@ -1,11 +1,31 @@
 from __future__ import generators
 
+############## py3k #########################################################
+try:
+    from UserList import UserList
+except ImportError:
+    from collections import UserList
+
+try:
+    from UserDict import UserDict
+except ImportError:
+    from collections import UserDict
+
+try:
+    from cStringIO import StringIO
+except ImportError:
+    try:
+        from StringIO import StringIO
+    except ImportError:
+        from io import StringIO
+
 ############## urlparse.parse_qsl ###########################################
 
 try:
     from urlparse import parse_qsl
 except ImportError:
     from cgi import parse_qsl
+parse_sql = parse_qsl
 
 ############## __builtin__.all ##############################################
 
@@ -44,10 +64,12 @@ from operator import eq as _eq
 
 class _Link(object):
     """Doubly linked list."""
-    __slots__ = 'prev', 'next', 'key', '__weakref__'
+    # next can't be lowercase because 2to3 thinks it's a generator
+    # and renames it to __next__.
+    __slots__ = 'PREV', 'NEXT', 'key', '__weakref__'
 
 
-class OrderedDict(dict, MutableMapping):
+class CompatOrderedDict(dict, MutableMapping):
     """Dictionary that remembers insertion order"""
     # An inherited dict maps keys to values.
     # The inherited dict provides __getitem__, __len__, __contains__, and get.
@@ -79,18 +101,18 @@ class OrderedDict(dict, MutableMapping):
             raise TypeError("expected at most 1 arguments, got %d" % (
                                 len(args)))
         try:
-            self.__root
+            self._root
         except AttributeError:
             # sentinel node for the doubly linked list
-            self.__root = root = _Link()
-            root.prev = root.next = root
+            self._root = root = _Link()
+            root.PREV = root.NEXT = root
             self.__map = {}
         self.update(*args, **kwds)
 
     def clear(self):
         "od.clear() -> None.  Remove all items from od."
-        root = self.__root
-        root.prev = root.next = root
+        root = self._root
+        root.PREV = root.NEXT = root
         self.__map.clear()
         dict.clear(self)
 
@@ -101,10 +123,10 @@ class OrderedDict(dict, MutableMapping):
         # key/value pair.
         if key not in self:
             self.__map[key] = link = _Link()
-            root = self.__root
-            last = root.prev
-            link.prev, link.next, link.key = last, root, key
-            last.next = root.prev = weakref.proxy(link)
+            root = self._root
+            last = root.PREV
+            link.PREV, link.NEXT, link.key = last, root, key
+            last.NEXT = root.PREV = weakref.proxy(link)
         dict.__setitem__(self, key, value)
 
     def __delitem__(self, key):
@@ -114,34 +136,34 @@ class OrderedDict(dict, MutableMapping):
         # predecessor and successor nodes.
         dict.__delitem__(self, key)
         link = self.__map.pop(key)
-        link.prev.next = link.next
-        link.next.prev = link.prev
+        link.PREV.NEXT = link.NEXT
+        link.NEXT.PREV = link.PREV
 
     def __iter__(self):
         """od.__iter__() <==> iter(od)"""
         # Traverse the linked list in order.
-        root = self.__root
-        curr = root.next
+        root = self._root
+        curr = root.NEXT
         while curr is not root:
             yield curr.key
-            curr = curr.next
+            curr = curr.NEXT
 
     def __reversed__(self):
         """od.__reversed__() <==> reversed(od)"""
         # Traverse the linked list in reverse order.
-        root = self.__root
-        curr = root.prev
+        root = self._root
+        curr = root.PREV
         while curr is not root:
             yield curr.key
-            curr = curr.prev
+            curr = curr.PREV
 
     def __reduce__(self):
         """Return state information for pickling"""
         items = [[k, self[k]] for k in self]
-        tmp = self.__map, self.__root
-        del(self.__map, self.__root)
+        tmp = self.__map, self._root
+        del(self.__map, self._root)
         inst_dict = vars(self).copy()
-        self.__map, self.__root = tmp
+        self.__map, self._root = tmp
         if inst_dict:
             return (self.__class__, (items,), inst_dict)
         return self.__class__, (items,)
@@ -242,6 +264,11 @@ class OrderedDict(dict, MutableMapping):
     def __ne__(self, other):
         return not (self == other)
 
+try:
+    from collections import OrderedDict
+except ImportError:
+    OrderedDict = CompatOrderedDict
+
 ############## collections.defaultdict ######################################
 
 try:
@@ -287,93 +314,136 @@ except ImportError:
             return "defaultdict(%s, %s)" % (self.default_factory,
                                             dict.__repr__(self))
     import collections
-    collections.defaultdict = defaultdict # Pickle needs this.
+    collections.defaultdict = defaultdict           # Pickle needs this.
 
 ############## logging.LoggerAdapter ########################################
+import inspect
+import logging
+try:
+    import multiprocessing
+except ImportError:
+    multiprocessing = None
+import sys
+
+from logging import LogRecord
+
+log_takes_extra = "extra" in inspect.getargspec(logging.Logger._log)[0]
+
+# The func argument to LogRecord was added in 2.5
+if "func" not in inspect.getargspec(LogRecord.__init__)[0]:
+    def LogRecord(name, level, fn, lno, msg, args, exc_info, func):
+        return logging.LogRecord(name, level, fn, lno, msg, args, exc_info)
+
+
+def _checkLevel(level):
+    if isinstance(level, int):
+        rv = level
+    elif str(level) == level:
+        if level not in logging._levelNames:
+            raise ValueError("Unknown level: %r" % level)
+        rv = logging._levelNames[level]
+    else:
+        raise TypeError("Level not an integer or a valid string: %r" % level)
+    return rv
+
+
+class _CompatLoggerAdapter(object):
+
+    def __init__(self, logger, extra):
+        self.logger = logger
+        self.extra = extra
+
+    def setLevel(self, level):
+        self.logger.level = _checkLevel(level)
+
+    def process(self, msg, kwargs):
+        kwargs["extra"] = self.extra
+        return msg, kwargs
+
+    def debug(self, msg, *args, **kwargs):
+        self.log(logging.DEBUG, msg, *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        self.log(logging.INFO, msg, *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        self.log(logging.WARNING, msg, *args, **kwargs)
+    warn = warning
+
+    def error(self, msg, *args, **kwargs):
+        self.log(logging.ERROR, msg, *args, **kwargs)
+
+    def exception(self, msg, *args, **kwargs):
+        kwargs.setdefault("exc_info", 1)
+        self.error(msg, *args, **kwargs)
+
+    def critical(self, msg, *args, **kwargs):
+        self.log(logging.CRITICAL, msg, *args, **kwargs)
+    fatal = critical
+
+    def log(self, level, msg, *args, **kwargs):
+        if self.logger.isEnabledFor(level):
+            msg, kwargs = self.process(msg, kwargs)
+            self._log(level, msg, args, **kwargs)
+
+    def makeRecord(self, name, level, fn, lno, msg, args, exc_info,
+            func=None, extra=None):
+        rv = LogRecord(name, level, fn, lno, msg, args, exc_info, func)
+        if extra is not None:
+            for key, value in extra.items():
+                if key in ("message", "asctime") or key in rv.__dict__:
+                    raise KeyError(
+                            "Attempt to override %r in LogRecord" % key)
+                rv.__dict__[key] = value
+        if multiprocessing is not None:
+            rv.processName = multiprocessing.current_process()._name
+        else:
+            rv.processName = ""
+        return rv
+
+    def _log(self, level, msg, args, exc_info=None, extra=None):
+        defcaller = "(unknown file)", 0, "(unknown function)"
+        if logging._srcfile:
+            # IronPython doesn't track Python frames, so findCaller
+            # throws an exception on some versions of IronPython.
+            # We trap it here so that IronPython can use logging.
+            try:
+                fn, lno, func = self.logger.findCaller()
+            except ValueError:
+                fn, lno, func = defcaller
+        else:
+            fn, lno, func = defcaller
+        if exc_info:
+            if not isinstance(exc_info, tuple):
+                exc_info = sys.exc_info()
+        record = self.makeRecord(self.logger.name, level, fn, lno, msg,
+                                 args, exc_info, func, extra)
+        self.logger.handle(record)
+
+    def isEnabledFor(self, level):
+        return self.logger.isEnabledFor(level)
+
+    def addHandler(self, hdlr):
+        self.logger.addHandler(hdlr)
+
+    def removeHandler(self, hdlr):
+        self.logger.removeHandler(hdlr)
+
+    @property
+    def level(self):
+        return self.logger.level
+
 
 try:
     from logging import LoggerAdapter
 except ImportError:
-    import logging
-    class LoggerAdapter(object):
+    LoggerAdapter = _CompatLoggerAdapter
 
-        def __init__(self, logger, extra):
-            self.logger = logger
-            self.extra = extra
 
-        def setLevel(self, level):
-            self.level = logging._checkLevel(level)
-
-        def process(self, msg, kwargs):
-            kwargs["extra"] = self.extra
-            return msg, kwargs
-
-        def debug(self, msg, *args, **kwargs):
-            self.log(logging.DEBUG, msg, args, **kwargs)
-
-        def info(self, msg, *args, **kwargs):
-            self.log(logging.INFO, msg, *args, **kwargs)
-
-        def warning(self, msg, *args, **kwargs):
-            self.log(logging.WARNING, msg, *args, **kwargs)
-        warn = warning
-
-        def error(self, msg, *args, **kwargs):
-            self.log(logging.ERROR, msg, *args, **kwargs)
-
-        def exception(self, msg, *args, **kwargs):
-            kwargs.setdefault("exc_info", 1)
-            self.error(msg, *args, **kwargs)
-
-        def critical(self, msg, *args, **kwargs):
-            self.log(logging.CRITICAL, msg, *args, **kwargs)
-        fatal = critical
-
-        def log(self, level, msg, *args, **kwargs):
-            if self.logger.isEnabledFor(level):
-                msg, kwargs = self.process(msg, kwargs)
-                self._log(level, msg, *args, **kwargs)
-
-        def makeRecord(self, name, level, fn, lno, msg, args, exc_info, 
-                func=None, extra=None):
-            rv = logging.LogRecord(name, level, fn, lno,
-                                   msg, args, exc_info, func)
-            if extra is not None:
-                for key, value in extra.items():
-                    if key in ("message", "asctime") or key in rv.__dict__:
-                        raise KeyError(
-                                "Attempt to override %r in LogRecord" % key)
-                    rv.__dict__[key] = value
-            return rv
-
-        def _log(self, level, msg, args, exc_info=None, extra=None):
-            defcaller = "(unknown file)", 0, "(unknown function)"
-            if logging._srcfile:
-                # IronPython doesn't track Python frames, so findCaller
-                # throws an exception on some versions of IronPython.
-                # We trap it here so that IronPython can use logging.
-                try:
-                    fn, lno, func = self.logger.findCaller()
-                except ValueError:
-                    fn, lno, func = defcaller
-            else:
-                fn, lno, func = defcaller
-            if exc_info:
-                if not isinstance(exc_info, tuple):
-                    exc_info = sys.exc_info()
-            record = self.makeRecord(self.logger.name, level, fn, lno, msg,
-                                     args, exc_info, func, extra)
-            self.logger.handle(record)
-
-        def isEnabledFor(self, level, *args, **kwargs):
-            return self.logger.isEnabledFor(level, *args, **kwargs)
-
-        def addHandler(self, hdlr):
-            self.logger.addHandler(hdlr)
-
-        def removeHandler(self, hdlr):
-            self.logger.removeHandler(hdlr)
-
+def log_with_extra(logger, level, msg, *args, **kwargs):
+    if not log_takes_extra:
+        kwargs.pop("extra", None)
+    return logger.log(level, msg, *args, **kwargs)
 
 ############## itertools.izip_longest #######################################
 
@@ -381,11 +451,12 @@ try:
     from itertools import izip_longest
 except ImportError:
     import itertools
+
     def izip_longest(*args, **kwds):
         fillvalue = kwds.get("fillvalue")
 
         def sentinel(counter=([fillvalue] * (len(args) - 1)).pop):
-            yield counter() # yields the fillvalue, or raises IndexError
+            yield counter()     # yields the fillvalue, or raises IndexError
 
         fillers = itertools.repeat(fillvalue)
         iters = [itertools.chain(it, sentinel(), fillers)
@@ -395,6 +466,7 @@ except ImportError:
                 yield tup
         except IndexError:
             pass
+
 
 ############## itertools.chain.from_iterable ################################
 from itertools import chain

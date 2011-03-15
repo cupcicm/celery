@@ -3,117 +3,69 @@
 Worker Controller Threads
 
 """
-import time
+import logging
+import sys
 import threading
-from Queue import Empty as QueueEmpty
+import traceback
 
-from celery import conf
-from celery import log
+from Queue import Empty
+
+from celery.app import app_or_default
+from celery.utils.compat import log_with_extra
 
 
-class BackgroundThread(threading.Thread):
-    """Thread running an infinite loop which for every iteration
-    calls its :meth:`on_iteration` method.
+class Mediator(threading.Thread):
+    """Thread continuously moving tasks from the ready queue into the pool."""
 
-    This also implements graceful shutdown of the thread by providing
-    the :meth:`stop` method.
+    #: The task queue, a :class:`~Queue.Queue` instance.
+    ready_queue = None
 
-    """
+    #: Callback called when a task is obtained.
+    callback = None
 
-    def __init__(self):
-        super(BackgroundThread, self).__init__()
+    def __init__(self, ready_queue, callback, logger=None, app=None):
+        threading.Thread.__init__(self)
+        self.app = app_or_default(app)
+        self.logger = logger or self.app.log.get_default_logger()
+        self.ready_queue = ready_queue
+        self.callback = callback
         self._shutdown = threading.Event()
         self._stopped = threading.Event()
         self.setDaemon(True)
+        self.setName(self.__class__.__name__)
+
+    def move(self):
+        try:
+            task = self.ready_queue.get(timeout=1.0)
+        except Empty:
+            return
+
+        if task.revoked():
+            return
+
+        self.logger.debug(
+            "Mediator: Running callback for task: %s[%s]" % (
+                task.task_name, task.task_id))
+
+        try:
+            self.callback(task)
+        except Exception, exc:
+            log_with_extra(self.logger, logging.ERROR,
+                           "Mediator callback raised exception %r\n%s" % (
+                               exc, traceback.format_exc()),
+                           exc_info=sys.exc_info(),
+                           extra={"data": {"hostname": task.hostname,
+                                           "id": task.task_id,
+                                           "name": task.task_name}})
 
     def run(self):
-        """This is the body of the thread.
-
-        To start the thread use :meth:`start` instead.
-
-        """
-        self.on_start()
-
-        while 1:
-            if self._shutdown.isSet():
-                break
-            self.on_iteration()
-        self._stopped.set() # indicate that we are stopped
-
-    def on_start(self):
-        """This handler is run at thread start, just before the infinite
-        loop."""
-        pass
-
-    def on_iteration(self):
-        """This is the method called for every iteration and must be
-        implemented by every subclass of :class:`BackgroundThread`."""
-        raise NotImplementedError(
-                "InfiniteThreads must implement on_iteration")
-
-    def on_stop(self):
-        """This handler is run when the thread is shutdown."""
-        pass
+        """Move tasks forver or until :meth:`stop` is called."""
+        while not self._shutdown.isSet():
+            self.move()
+        self._stopped.set()
 
     def stop(self):
         """Gracefully shutdown the thread."""
-        self.on_stop()
         self._shutdown.set()
-        self._stopped.wait() # block until this thread is done
-        self.join(1e100)
-
-
-class Mediator(BackgroundThread):
-    """Thread continuously sending tasks in the queue to the pool.
-
-    .. attribute:: ready_queue
-
-        The task queue, a :class:`Queue.Queue` instance.
-
-    .. attribute:: callback
-
-        The callback used to process tasks retrieved from the
-        :attr:`ready_queue`.
-
-    """
-
-    def __init__(self, ready_queue, callback, logger=None):
-        super(Mediator, self).__init__()
-        self.logger = logger or log.get_default_logger()
-        self.ready_queue = ready_queue
-        self.callback = callback
-
-    def on_iteration(self):
-        """Get tasks from bucket queue and apply the task callback."""
-        try:
-            # This blocks until there's a message in the queue.
-            task = self.ready_queue.get(timeout=1)
-        except QueueEmpty:
-            pass
-        else:
-            if task.revoked():
-                return
-
-            self.logger.debug(
-                    "Mediator: Running callback for task: %s[%s]" % (
-                        task.task_name, task.task_id))
-            self.callback(task) # execute
-
-
-class ScheduleController(BackgroundThread):
-    """Schedules tasks with an ETA by moving them to the bucket queue."""
-
-    def __init__(self, eta_schedule, logger=None,
-            precision=None):
-        super(ScheduleController, self).__init__()
-        self.logger = logger or log.get_default_logger()
-        self._scheduler = iter(eta_schedule)
-        self.precision = precision or conf.CELERYD_ETA_SCHEDULER_PRECISION
-        self.debug = log.SilenceRepeated(self.logger.debug, max_iterations=10)
-
-    def on_iteration(self):
-        """Wake-up scheduler"""
-        delay = self._scheduler.next()
-        self.debug("ScheduleController: Scheduler wake-up"
-                "ScheduleController: Next wake-up eta %s seconds..." % delay)
-        time.sleep(delay or self.precision)
+        self._stopped.wait()
+        self.join(1e10)

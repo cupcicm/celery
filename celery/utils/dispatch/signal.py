@@ -4,7 +4,7 @@ import weakref
 try:
     set
 except NameError:
-    from sets import Set as set # Python 2.3 fallback
+    from sets import Set as set                 # Python 2.3 fallback
 
 from celery.utils.dispatch import saferef
 
@@ -23,7 +23,7 @@ class Signal(object):
 
     .. attribute:: receivers
         Internal attribute, holds a dictionary of
-        ``{receriverkey (id): weakref(receiver)}`` mappings.
+        `{receriverkey (id): weakref(receiver)}` mappings.
 
     """
 
@@ -45,18 +45,18 @@ class Signal(object):
         :param receiver: A function or an instance method which is to
             receive signals. Receivers must be hashable objects.
 
-            if weak is ``True``, then receiver must be weak-referencable (more
-            precisely :func:`saferef.safe_ref()` must be able to create a
+            if weak is :const:`True`, then receiver must be weak-referencable
+            (more precisely :func:`saferef.safe_ref()` must be able to create a
             reference to the receiver).
 
             Receivers must be able to accept keyword arguments.
 
-            If receivers have a ``dispatch_uid`` attribute, the receiver will
+            If receivers have a `dispatch_uid` attribute, the receiver will
             not be added if another receiver already exists with that
-            ``dispatch_uid``.
+            `dispatch_uid`.
 
         :keyword sender: The sender to which the receiver should respond.
-            Must either be of type :class:`Signal`, or ``None`` to receive
+            Must either be of type :class:`Signal`, or :const:`None` to receive
             events from any sender.
 
         :keyword weak: Whether to use weak references to the receiver.
@@ -92,7 +92,7 @@ class Signal(object):
         receiver will be removed from dispatch automatically.
 
         :keyword receiver: The registered receiver to disconnect. May be
-            none if ``dispatch_uid`` is specified.
+            none if `dispatch_uid` is specified.
 
         :keyword sender: The registered sender to disconnect.
 
@@ -121,11 +121,11 @@ class Signal(object):
         have all receivers called if a raises an error.
 
         :param sender: The sender of the signal. Either a specific
-            object or ``None``.
+            object or :const:`None`.
 
         :keyword \*\*named: Named arguments which will be passed to receivers.
 
-        :returns: a list of tuple pairs: ``[(receiver, response), ... ]``.
+        :returns: a list of tuple pairs: `[(receiver, response), ... ]`.
 
         """
         responses = []
@@ -148,7 +148,7 @@ class Signal(object):
             These arguments must be a subset of the argument names defined in
             :attr:`providing_args`.
 
-        :returns: a list of tuple pairs: ``[(receiver, response), ... ]``.
+        :returns: a list of tuple pairs: `[(receiver, response), ... ]`.
 
         :raises DispatcherKeyError:
 

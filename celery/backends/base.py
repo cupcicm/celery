@@ -1,17 +1,15 @@
 """celery.backends.base"""
 import time
 
-from celery import conf
 from celery import states
 from celery.exceptions import TimeoutError, TaskRevokedError
-from celery.serialization import pickle, get_pickled_exception
-from celery.serialization import get_pickleable_exception
+from celery.utils.serialization import pickle, get_pickled_exception
+from celery.utils.serialization import get_pickleable_exception
 from celery.datastructures import LocalCache
 
 
 class BaseBackend(object):
-    """The base backend class. All backends should inherit from this."""
-
+    """Base backend class."""
     READY_STATES = states.READY_STATES
     UNREADY_STATES = states.UNREADY_STATES
     EXCEPTION_STATES = states.EXCEPTION_STATES
@@ -19,7 +17,8 @@ class BaseBackend(object):
     TimeoutError = TimeoutError
 
     def __init__(self, *args, **kwargs):
-        pass
+        from celery.app import app_or_default
+        self.app = app_or_default(kwargs.get("app"))
 
     def encode_result(self, result, status):
         if status in self.EXCEPTION_STATES:
@@ -32,9 +31,9 @@ class BaseBackend(object):
         raise NotImplementedError(
                 "store_result is not supported by this backend.")
 
-    def mark_as_started(self, task_id):
+    def mark_as_started(self, task_id, **meta):
         """Mark a task as started"""
-        return self.store_result(task_id, None, status=states.STARTED)
+        return self.store_result(task_id, meta, status=states.STARTED)
 
     def mark_as_done(self, task_id, result):
         """Mark task as successfully executed."""
@@ -67,19 +66,22 @@ class BaseBackend(object):
         """Prepare value for storage."""
         return result
 
-    def wait_for(self, task_id, timeout=None):
+    def forget(self, task_id):
+        raise NotImplementedError("%s does not implement forget." % (
+                    self.__class__))
+
+    def wait_for(self, task_id, timeout=None, propagate=True, interval=0.5):
         """Wait for task and return its result.
 
         If the task raises an exception, this exception
         will be re-raised by :func:`wait_for`.
 
-        If ``timeout`` is not ``None``, this raises the
+        If `timeout` is not :const:`None`, this raises the
         :class:`celery.exceptions.TimeoutError` exception if the operation
-        takes longer than ``timeout`` seconds.
+        takes longer than `timeout` seconds.
 
         """
 
-        sleep_inbetween = 0.5
         time_elapsed = 0.0
 
         while True:
@@ -87,10 +89,13 @@ class BaseBackend(object):
             if status == states.SUCCESS:
                 return self.get_result(task_id)
             elif status in states.PROPAGATE_STATES:
-                raise self.get_result(task_id)
+                result = self.get_result(task_id)
+                if propagate:
+                    raise result
+                return result
             # avoid hammering the CPU checking status.
-            time.sleep(sleep_inbetween)
-            time_elapsed += sleep_inbetween
+            time.sleep(interval)
+            time_elapsed += interval
             if timeout and time_elapsed >= timeout:
                 raise TimeoutError("The operation timed out.")
 
@@ -144,12 +149,20 @@ class BaseDictBackend(BaseBackend):
     def __init__(self, *args, **kwargs):
         super(BaseDictBackend, self).__init__(*args, **kwargs)
         self._cache = LocalCache(limit=kwargs.get("max_cached_results") or
-                                 conf.MAX_CACHED_RESULTS)
+                                 self.app.conf.CELERY_MAX_CACHED_RESULTS)
 
-    def store_result(self, task_id, result, status, traceback=None):
+    def store_result(self, task_id, result, status, traceback=None, **kwargs):
         """Store task result and status."""
         result = self.encode_result(result, status)
-        return self._store_result(task_id, result, status, traceback)
+        return self._store_result(task_id, result, status, traceback, **kwargs)
+
+    def forget(self, task_id):
+        self._cache.pop(task_id, None)
+        self._forget(task_id)
+
+    def _forget(self, task_id):
+        raise NotImplementedError("%s does not implement forget." % (
+                    self.__class__))
 
     def get_status(self, task_id):
         """Get the status of a task."""
@@ -157,7 +170,7 @@ class BaseDictBackend(BaseBackend):
 
     def get_traceback(self, task_id):
         """Get the traceback for a failed task."""
-        return self.get_task_meta(task_id)["traceback"]
+        return self.get_task_meta(task_id).get("traceback")
 
     def get_result(self, task_id):
         """Get the result of a task."""
@@ -211,6 +224,9 @@ class KeyValueStoreBackend(BaseDictBackend):
     def set(self, key, value):
         raise NotImplementedError("Must implement the set method.")
 
+    def delete(self, key):
+        raise NotImplementedError("Must implement the delete method")
+
     def get_key_for_task(self, task_id):
         """Get the cache key for a task by id."""
         return "celery-task-meta-%s" % task_id
@@ -218,6 +234,9 @@ class KeyValueStoreBackend(BaseDictBackend):
     def get_key_for_taskset(self, task_id):
         """Get the cache key for a task by id."""
         return "celery-taskset-meta-%s" % task_id
+
+    def _forget(self, task_id):
+        self.delete(self.get_key_for_task(task_id))
 
     def _store_result(self, task_id, result, status, traceback=None):
         meta = {"status": status, "result": result, "traceback": traceback}

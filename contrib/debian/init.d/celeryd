@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 # ============================================
 #  celeryd - Starts the Celery worker daemon.
 # ============================================
@@ -20,7 +20,7 @@
 #   CELERYD_CHDIR="/opt/Myproject/"
 #
 #   # Extra arguments to celeryd
-#   CELERYD_OPTS="--time-limit 300"
+#   CELERYD_OPTS="--time-limit=300"
 #
 #   # Name of the celery config module.#
 #   CELERY_CONFIG_MODULE="celeryconfig"
@@ -32,31 +32,34 @@
 #   CELERYD_CHDIR="/opt/Project/"
 #
 #   # Name of the projects settings module.
-#   DJANGO_SETTINGS_MODULE="settings"
+#   export DJANGO_SETTINGS_MODULE="settings"
 #
 #   # Path to celeryd
-#   CELERYD="/opt/Project/manage.py celeryd"
+#   CELERYD="/opt/Project/manage.py"
+#
+#   # Extra arguments to manage.py
+#   CELERYD_OPTS="celeryd"
 #
 # AVAILABLE OPTIONS
 # =================
 #
 #   * CELERYD_OPTS
-#       Additional arguments to celeryd, see ``celeryd --help`` for a list.
+#       Additional arguments to celeryd, see `celeryd --help` for a list.
 #
 #   * CELERYD_CHDIR
 #       Path to chdir at start. Default is to stay in the current directory.
 #
-#   * CELERYD_PIDFILE
+#   * CELERYD_PID_FILE
 #       Full path to the pidfile. Default is /var/run/celeryd.pid.
 #
-#   * CELERYD_LOGFILE
+#   * CELERYD_LOG_FILE
 #       Full path to the celeryd logfile. Default is /var/log/celeryd.log
 #
 #   * CELERYD_LOG_LEVEL
 #       Log level to use for celeryd. Default is INFO.
 #
 #   * CELERYD
-#       Path to the celeryd program. Default is ``celeryd``.
+#       Path to the celeryd program. Default is `celeryd`.
 #       You can point this to an virtualenv, or even use manage.py for django.
 #
 #   * CELERYD_USER
@@ -64,7 +67,9 @@
 #
 #   * CELERYD_GROUP
 #       Group to run celeryd as. Default is current user.
-
+#
+#   * VIRTUALENV
+#       Full path to the virtualenv environment to activate. Default is none.
 
 ### BEGIN INIT INFO
 # Provides:          celeryd
@@ -77,9 +82,6 @@
 
 set -e
 
-CELERYD_PID_FILE="/var/run/celeryd.pid"
-CELERYD_LOG_FILE="/var/log/celeryd.log"
-CELERYD_LOG_LEVEL="INFO"
 DEFAULT_CELERYD="/usr/bin/celeryd"
 
 # /etc/init.d/ssh: start and stop the celery task worker daemon.
@@ -87,6 +89,10 @@ DEFAULT_CELERYD="/usr/bin/celeryd"
 if test -f /etc/default/celeryd; then
     . /etc/default/celeryd
 fi
+
+CELERYD_LOG_FILE=${CELERYD_LOG_FILE:-${CELERYD_LOGFILE:-"/var/log/celeryd.log"}}
+CELERYD_PID_FILE=${CELERYD_PID_FILE:-${CELERYD_PIDFILE:-"/var/run/celeryd.pid"}}
+CELERYD_LOG_LEVEL=${CELERYD_LOG_LEVEL:-${CELERYD_LOGLEVEL:-"INFO"}}
 
 CELERYD=${CELERYD:-$DEFAULT_CELERYD}
 
@@ -156,6 +162,9 @@ start_worker () {
                            $* \
                            --pidfile $CELERYD_PID_FILE
                            --exec $CELERYD -- $CELERYD_OPTS"
+    if [ -n "$VIRTUALENV" ]; then
+        source $VIRTUALENV/bin/activate
+    fi
     if $cmd; then
         log_end_msg 0
     else

@@ -1,6 +1,4 @@
-mailer
 python-dateutil
-sqlalchemy
 anyjson
-carrot>=0.10.5
-pyparsing
+kombu>=1.0.3
+pyparsing>=1.5.0

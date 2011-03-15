@@ -1,3 +1,5 @@
+.. _internals:
+
 ===========
  Internals
 ===========
@@ -11,6 +13,5 @@
     deprecation
     worker
     protocol
-    events
-    moduleindex
+    app-overview
     reference/index

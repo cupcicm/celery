@@ -1,5 +1,5 @@
 ==========================================
-Celery Worker Daemon - celery.bin.celeryd
+ celery.bin.celeryd
 ==========================================
 
 .. contents::

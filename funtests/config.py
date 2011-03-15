@@ -1,7 +1,7 @@
 import atexit
 import os
 
-CARROT_BACKEND = os.environ.get("CARROT_BACKEND") or "amqplib"
+BROKER_BACKEND = os.environ.get("BROKER_BACKEND") or "amqplib"
 
 BROKER_HOST = os.environ.get("BROKER_HOST") or "localhost"
 BROKER_USER = os.environ.get("BROKER_USER") or "guest"
@@ -20,6 +20,7 @@ CELERY_QUEUES = {"testcelery": {"binding_key": "testcelery"}}
 CELERYD_LOG_COLOR = False
 
 CELERY_IMPORTS = ("celery.tests.functional.tasks", )
+
 
 @atexit.register
 def teardown_testdb():
