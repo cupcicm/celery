@@ -11,9 +11,10 @@ else:
     from celery.db.a805d4bd import PickleType
 
 try:
-    import json
+  from ltu.utils.jsonutils import FoolProofJsonSerializer
 except ImportError, _:
-    import simplejson as json
+  raise ImportError("You are using a LTU-modified version of celery. "
+                    "It needs access to LTU python classes to run.")
 
 class Task(ResultModelBase):
     """Task result/status."""
@@ -25,7 +26,7 @@ class Task(ResultModelBase):
                    autoincrement=True)
     task_id = sa.Column(sa.String(255), unique=True)
     status = sa.Column(sa.String(50), default=states.PENDING)
-    result = sa.Column(PickleType(pickler=json), nullable=True)
+    result = sa.Column(PickleType(pickler=FoolProofJsonSerializer()), nullable=True)
     date_done = sa.Column(sa.DateTime, default=datetime.now,
                        onupdate=datetime.now, nullable=True)
     traceback = sa.Column(sa.Text, nullable=True)
@@ -40,6 +41,9 @@ class Task(ResultModelBase):
                 "traceback": self.traceback,
                 "date_done": self.date_done}
 
+    def __eq__(self, other):
+        return self.task_id == other.task_id
+
     def __repr__(self):
         return "<Task %s state: %s>" % (self.task_id, self.status)
 
@@ -52,7 +56,7 @@ class TaskSet(ResultModelBase):
     id = sa.Column(sa.Integer, sa.Sequence("taskset_id_sequence"),
                 autoincrement=True, primary_key=True)
     taskset_id = sa.Column(sa.String(255), unique=True)
-    result = sa.Column(sa.PickleType(pickler=json), nullable=True)
+    result = sa.Column(sa.PickleType(pickler=FoolProofJsonSerializer()), nullable=True)
     date_done = sa.Column(sa.DateTime, default=datetime.now,
                        nullable=True)
 
